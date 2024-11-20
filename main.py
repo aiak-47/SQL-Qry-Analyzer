@@ -17,7 +17,7 @@ class SqlApp(QMainWindow):
         self.initUI()
 
     def initUI(self):
-        self.setWindowTitle('SQL Query Compare')
+        self.setWindowTitle('SQL Query Analyzer')
         self.setGeometry(100, 100, 1000, 600)
 
         # Maximize the window
@@ -28,8 +28,7 @@ class SqlApp(QMainWindow):
         self.setMenuBar(self.menu)
 
         # Initial connection strings
-        # self.sql_connection_string = 'mssql+pyodbc://username:password@server/database?driver=ODBC+Driver+18+for+SQL+Server'
-        # self.mongo_connection_string = 'your_mongo_connection_string'
+        self.sql_connection_string = "mssql+pyodbc://dmatchadmin:IntDon786#@dmdb-srv.database.windows.net,1433/DonMatchDB?driver=ODBC+Driver+18+for+SQL+Server"
 
         # Central widget
         central_widget = QWidget()
@@ -55,7 +54,7 @@ class SqlApp(QMainWindow):
 
         # Execute button
         execute_button = QPushButton('Execute', self)
-        execute_button.clicked.connect(self.execute_query)
+        execute_button.clicked.connect(self.execute_queries)
         layout.addWidget(execute_button)
 
         # Create a horizontal layout for result displays
@@ -87,66 +86,63 @@ class SqlApp(QMainWindow):
         self.analysis_display.setReadOnly(True)
         layout.addWidget(self.analysis_display)
 
+
         central_widget.setLayout(layout)
 
-    def execute_query(self):
+    def execute_queries(self):
         query1 = self.query_input1.toPlainText()
         query2 = self.query_input2.toPlainText()
+        
+        df1,exec_time_left = self.execute_query(query1)
+        df2,exec_time_right = self.execute_query(query2)
+        
+        self.display_results(self.result_table1, df1)
+        self.display_results(self.result_table2, df2)
+        self.qry_stats_label_left.setText(f'Rows:{len(df1)} in {exec_time_left:.2f} ms')
+        self.qry_stats_label_right.setText(f'Rows:{len(df2)} in {exec_time_right:.2f} ms')
+        # self.record_count_label.setText(f'Records Returned: Query 1 - {len(df1)}, Query 2 - {len(df2)}')
 
+        # Perform comparison if both results are available
+        if not df1.empty and not df2.empty:
+            analysis = self.summarize_differences(df1, df2)
+            self.analysis_display.setText(analysis)
+        else:
+            self.analysis_display.setText('No results to compare.')
+
+        # except Exception as e:
+        #     QMessageBox.critical(self, 'Error', f'An error occurred: {e}', QMessageBox.Ok)
+        
+    def execute_query(self, qry):
         try:
             # Create the SQLAlchemy engine
             engine = create_engine(self.sql_connection_string)
-            # Enable STATISTICS TIME for the session
-            with engine.connect() as conn:
-                conn.execute('SET STATISTICS TIME ON')
-                
-                 # Variable to store execution time
             execution_time = []
-            
-            @event.listens_for(engine, "do_execute")
-            def do_execute(conn, cursor, statement, parameters, context):
-                cursor.execute(statement, parameters)
-
-                # Capture and parse SQL Server messages
-                messages = conn.connection.connection.get_messages()
-                for message in messages:
-                    match = re.search(r'CPU time = (\d+) ms, elapsed time = (\d+) ms.', str(message))
-                    if match:
-                        execution_time.append(f"Elapsed time: {match.group(2)} ms")
-
-            # Execute the first query
-            # start_time = time.time()
-            df1 = pd.read_sql_query(query1, engine)
-            # exec_time_left = (time.time() - start_time) * 1000  # Convert to milliseconds
-            exec_time_left = execution_time[-1] if execution_time else "N/A"  # Capture the last execution time message
-             # Clear execution time
-            execution_time.clear()
-            
-            # Execute the second query
-            # start_time = time.time()
-            df2 = pd.read_sql_query(query2, engine)
-            # exec_time_right = (time.time() - start_time) * 1000  # Convert to milliseconds
-            exec_time_right = execution_time[-1] if execution_time else "N/A"  # Capture the last execution time message
-            # Disable STATISTICS TIME for the session
             with engine.connect() as conn:
-                conn.execute('SET STATISTICS TIME OFF')
+                # conn.execute("SET STATISTICS TIME ON;")
                 
-                
-            self.display_results(self.result_table1, df1)
-            self.display_results(self.result_table2, df2)
-            self.qry_stats_label_left.setText(f'Rows:{len(df1)} in {exec_time_left:.2f} ms')
-            self.qry_stats_label_right.setText(f'Rows:{len(df2)} in {exec_time_right:.2f} ms')
-            # self.record_count_label.setText(f'Records Returned: Query 1 - {len(df1)}, Query 2 - {len(df2)}')
+                # @event.listens_for(engine, "do_execute")
+                # def do_execute(conn, cursor, statement, parameters, context):
+                #     cursor.execute(statement, parameters)
 
-            # Perform comparison if both results are available
-            if not df1.empty and not df2.empty:
-                analysis = self.summarize_differences(df1, df2)
-                self.analysis_display.setText(analysis)
-            else:
-                self.analysis_display.setText('No result to compare.')
+                # # Capture and parse SQL Server messages
+                #     messages = conn.connection.connection.get_messages()
+                #     for message in messages:
+                #         match = re.search(r'CPU time = (\d+) ms, elapsed time = (\d+) ms.', str(message))
+                #         if match:
+                #             execution_time.append(f"Elapsed time: {match.group(2)} ms")
+                start_time = time.time()
+                df = pd.read_sql_query(qry, conn)
+                end_time = time.time()
 
+                exec_time = (end_time - start_time) * 1000 # in milliseconds
+                # conn.execute("SET STATISTICS TIME OFF")
+                # exec_time = execution_time[-1] if execution_time else "N/A"  # Capture the last execution time message
+                # Clear execution time
+                execution_time.clear()
+            return df, exec_time
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'An error occurred: {e}', QMessageBox.Ok)
+            return None, "N/A"             
 
     def display_results(self, table_widget, df):
         table_widget.setRowCount(df.shape[0])
@@ -157,31 +153,6 @@ class SqlApp(QMainWindow):
             for j in range(df.shape[1]):
                 table_widget.setItem(i, j, QTableWidgetItem(str(df.iloc[i, j])))
 
-    def summarize_differences(self, df1, df2):
-        differences = []
-        
-        # Identify numeric columns
-        numeric_cols = df1.select_dtypes(include='number').columns
-        # Identify boolean columns 
-        bool_cols = df1.select_dtypes(include='bool').columns
-        # Calculate variance for numeric columns
-        var1 = df1[numeric_cols].var() 
-        var2 = df2[numeric_cols].var() 
-        var_diff = var1 - var2
-        
-        differences.append(f'Variance Differences:\n{var_diff}') 
-        
-        # Calculate percentage differences for numeric columns
-        percentage_differences = ((df1[numeric_cols] - df2[numeric_cols]) / df2[numeric_cols].replace(0, pd.NA)) * 100
-        percentage_differences = percentage_differences.mean().dropna() 
-        
-        differences.append(f'Percentage Differences:\n{percentage_differences}')
-        
-        # Calculate differences for boolean columns 
-        bool_diff = df1[bool_cols].astype(int).sum() - df2[bool_cols].astype(int).sum() 
-        differences.append(f'Boolean Differences:\n{bool_diff}')
-        
-        return '\n\n'.join(differences) if differences else 'No differences found.'
     def summarize_differences(self, df1, df2):
         differences = []
     
@@ -218,10 +189,12 @@ class SqlApp(QMainWindow):
         var2 = df2[numeric_cols].var()
         var_diff = var1 - var2
 
-        percentage_differences = ((df1[numeric_cols] - df2[numeric_cols]) / df2[numeric_cols].replace(0, pd.NA)) * 100
-        percentage_differences = percentage_differences.mean().dropna()
+        # percentage_differences = ((df1[numeric_cols] - df2[numeric_cols]) / df2[numeric_cols].replace(0, pd.NA)) * 100
+        # percentage_differences = percentage_differences.mean().dropna()
 
-        return f'Numeric Differences:\nVariance Differences:\n{var_diff.to_string()}\nPercentage Differences:\n{percentage_differences.to_string()}'
+        return f'Numeric Differences:\n{var_diff.to_string()}'
+    
+    
     def calculate_bool_differences(self, df1, df2):
         bool_cols = df1.select_dtypes(include='bool').columns
         if bool_cols.empty:

@@ -16,6 +16,7 @@ class ConnectionStringDialog(QDialog):
         layout.addWidget(self.sql_label)
         self.sql_input = QLineEdit(self)
         self.sql_input.setFixedWidth(600)  # Increase the width of the input field
+        self.sql_input.setText("mssql+pyodbc://dmatchadmin:IntDon786#@dmdb-srv.database.windows.net,1433/DonMatchDB?driver=ODBC+Driver+18+for+SQL+Server")
         layout.addWidget(self.sql_input)
 
         self.mongo_label = QLabel('Enter MongoDB Connection String:', self)
