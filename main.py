@@ -116,33 +116,21 @@ class SqlApp(QMainWindow):
         try:
             # Create the SQLAlchemy engine
             engine = create_engine(self.sql_connection_string)
-            execution_time = []
-            with engine.connect() as conn:
-                # conn.execute("SET STATISTICS TIME ON;")
-                
-                # @event.listens_for(engine, "do_execute")
-                # def do_execute(conn, cursor, statement, parameters, context):
-                #     cursor.execute(statement, parameters)
 
-                # # Capture and parse SQL Server messages
-                #     messages = conn.connection.connection.get_messages()
-                #     for message in messages:
-                #         match = re.search(r'CPU time = (\d+) ms, elapsed time = (\d+) ms.', str(message))
-                #         if match:
-                #             execution_time.append(f"Elapsed time: {match.group(2)} ms")
+            # Capture the execution time
+            with engine.connect() as conn:
                 start_time = time.time()
                 df = pd.read_sql_query(qry, conn)
                 end_time = time.time()
+                
+            # Calculate execution time in milliseconds
+            exec_time = (end_time - start_time) * 1000  # in milliseconds
 
-                exec_time = (end_time - start_time) * 1000 # in milliseconds
-                # conn.execute("SET STATISTICS TIME OFF")
-                # exec_time = execution_time[-1] if execution_time else "N/A"  # Capture the last execution time message
-                # Clear execution time
-                execution_time.clear()
             return df, exec_time
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'An error occurred: {e}', QMessageBox.Ok)
-            return None, "N/A"             
+            return None, "N/A"
+          
 
     def display_results(self, table_widget, df):
         table_widget.setRowCount(df.shape[0])
@@ -189,9 +177,6 @@ class SqlApp(QMainWindow):
         var2 = df2[numeric_cols].var()
         var_diff = var1 - var2
 
-        # percentage_differences = ((df1[numeric_cols] - df2[numeric_cols]) / df2[numeric_cols].replace(0, pd.NA)) * 100
-        # percentage_differences = percentage_differences.mean().dropna()
-
         return f'Numeric Differences:\n{var_diff.to_string()}'
     
     
@@ -209,7 +194,10 @@ class SqlApp(QMainWindow):
             return ''
 
         string_diff = (df1[string_cols] != df2[string_cols]).sum()
-        return f'String Differences (number of differing rows):\n{string_diff.to_string()}'
+        if(string_diff >= 0):
+            return f'String Differences (number of differing rows):\n{string_diff.to_string()}'
+        else:
+            return ''
 
     def calculate_datetime_differences(self, df1, df2):
         datetime_cols = df1.select_dtypes(include='datetime').columns
@@ -220,10 +208,10 @@ class SqlApp(QMainWindow):
         return f'Datetime Differences (number of differing rows):\n{datetime_diff.to_string()}'
 
     def generate_high_level_summary(self, differences):
-        numeric_count = sum(1 for diff in differences if 'Numeric Differences' in diff)
-        bool_count = sum(1 for diff in differences if 'Boolean Differences' in diff)
-        string_count = sum(1 for diff in differences if 'String Differences' in diff)
-        datetime_count = sum(1 for diff in differences if 'Datetime Differences' in diff)
+        numeric_count = sum(1 for diff in differences if 'Numeric Differences' in diff)-1
+        bool_count = sum(1 for diff in differences if 'Boolean Differences' in diff)-1
+        string_count = sum(1 for diff in differences if 'String Differences' in diff)-1
+        datetime_count = sum(1 for diff in differences if 'Datetime Differences' in diff)-1
 
         return (
             f'High-Level Summary:\n'
