@@ -2,6 +2,7 @@ import sys
 import time
 import re
 import os
+import logging
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -9,10 +10,50 @@ from PyQt5.QtWidgets import (
 )
 from ydata_profiling import ProfileReport
 from PyQt5.QtCore import Qt,QThread, pyqtSignal
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor,QIcon
 from sqlalchemy import create_engine, event
 import pandas as pd
 from menu import MenuComponent
+
+logging.basicConfig(filename='app.log', level=logging.ERROR, format='%(asctime)s:%(levelname)s:%(message)s')
+
+def log_unhandled_exceptions(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        # Let the KeyboardInterrupt exception propagate normally
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return 
+    # Log the unhandled exception 
+    logging.error("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
+# Set the global exception handler 
+sys.excepthook = log_unhandled_exceptions    
+class QueryWorker(QThread):
+    update_status = pyqtSignal(str)
+    finished = pyqtSignal(object, object, object, object)  # Dataframes and execution times
+
+    def __init__(self, query1, query2, execute_query_func, profile_results_func):
+        super().__init__()
+        self.query1 = query1
+        self.query2 = query2
+        self.execute_query = execute_query_func
+        self.profile_results = profile_results_func
+
+    def run(self):
+        try:
+            self.update_status.emit('Executing left query...')
+            df1, exec_time_left = self.execute_query(self.query1)
+            self.update_status.emit('Left query executed. Profiling results...')
+            profile_left = self.profile_results(df1, 'left')
+
+            self.update_status.emit('Executing right query...')
+            df2, exec_time_right = self.execute_query(self.query2)
+            self.update_status.emit('Right query executed. Profiling results...')
+            profile_right = self.profile_results(df2, 'right')
+
+            self.finished.emit(df1, exec_time_left, df2, exec_time_right)
+        except Exception as e:
+            self.update_status.emit(f'Error: {e}')
+            self.finished.emit(None, None, None, None)
+  
 
 class MainApp(QMainWindow):
     # Initial connection strings
@@ -24,6 +65,8 @@ class MainApp(QMainWindow):
     def initUI(self):
         self.setWindowTitle('SQL Query Analyzer')
         self.setGeometry(100, 100, 1000, 600)
+        # Set the window icon 
+        self.setWindowIcon(QIcon('analysis.png'))
 
         # Maximize the window
         self.showMaximized()
@@ -108,37 +151,42 @@ class MainApp(QMainWindow):
         self.analysis_display.setTextColor(QColor(color)) 
         self.analysis_display.append(message)
     
-        
-        
     def execute_queries(self):
-        #clear previous results
+        # Clear previous results
         self.reset_ui()
         self.clean_reports_folder()
-        # Disable UI elements 
+        
+        # Disable UI elements
         self.enable_ui_elements(False)
         
-        # Show progress dialog 
-        # self.progress_dialog = QDialog('Executing queries...', self)
-        self.execute_button.text
-        self.execute_button.text= ('Executing queries...')
+        # Set initial button text
+        self.execute_button.setText('Executing queries...')
+        
+        # Get queries from text inputs
         query1 = self.query_input1.toPlainText()
         query2 = self.query_input2.toPlainText()
         
-        df1,exec_time_left = self.execute_query(query1)
-        self.execute_button.text= 'Left query executed. Profiling results...'
-        self.profile_left = self.profile_results(df1,'left')
-        df2,exec_time_right = self.execute_query(query2)
-        self.status_label='Right query executed. Profiling results...'
-        self.profile_right = self.profile_results(df2,'right')
-        self.status_label='Writing results to display...'
-        self.display_results(self.result_table1, df1)
-        self.display_results(self.result_table2, df2)
-        self.qry_stats_label_left.setText(f'Rows:{len(df1)} in {exec_time_left:.2f} ms')
-        self.qry_stats_label_right.setText(f'Rows:{len(df2)} in {exec_time_right:.2f} ms')
-        self.execute_button.text= 'validating results...'
+        # Create and start the worker thread
+        self.worker = QueryWorker(query1, query2, self.execute_query, self.profile_results)
+        self.worker.update_status.connect(self.update_button_text)
+        self.worker.finished.connect(self.handle_query_results)
+        self.worker.start()
+
+    def update_button_text(self, message):
+        self.execute_button.setText(message)
+        self.execute_button.repaint()  # Force repaint to update the text immediately
+
+    def handle_query_results(self, df1, exec_time_left, df2, exec_time_right):
+        if df1 is not None and df2 is not None:
+            self.display_results(self.result_table1, df1)
+            self.display_results(self.result_table2, df2)
+            self.qry_stats_label_left.setText(f'Rows: {len(df1)} in {exec_time_left:.2f} ms')
+            self.qry_stats_label_right.setText(f'Rows: {len(df2)} in {exec_time_right:.2f} ms')
+            self.update_button_text('Validating results...')
+
         # Perform comparison if both results are available
         if not df1.empty and not df2.empty:
-            self.execute_button.text='Starting comparison...'
+            self.update_button_text('Starting comparison...')
             comp_pass, message = self.compare_dataframes(df1, df2)
             if not comp_pass:
                 message_type = 'error'
@@ -151,18 +199,70 @@ class MainApp(QMainWindow):
                 self.write_to_analysis_display(message, message_type)
         else:
             self.write_to_analysis_display('No results to compare.', 'warning')
-            self.enable_ui_elements(True)
-            
+    
+    # Re-enable UI elements
         self.enable_ui_elements(True)
-        # except Exception as e:
-        #     QMessageBox.critical(self, 'Error', f'An error occurred: {e}', QMessageBox.Ok)
+        self.update_button_text('Execute')
+
+  
+        
+    # def execute_queries(self):
+    #     #clear previous results
+    #     self.reset_ui()
+    #     self.clean_reports_folder()
+    #     # Disable UI elements 
+    #     self.enable_ui_elements(False)
+        
+    #     # Show progress dialog 
+    #     # self.progress_dialog = QDialog('Executing queries...', self)
+    #     # self.execute_button.text
+    #     self.execute_button.setText('Executing queries...')
+    #     query1 = self.query_input1.toPlainText()
+    #     query2 = self.query_input2.toPlainText()
+        
+    #     df1,exec_time_left = self.execute_query(query1)
+    #     self.execute_button.setText('Left query executed. Profiling results...')
+    #     self.profile_left = self.profile_results(df1,'left')
+    #     df2,exec_time_right = self.execute_query(query2)
+    #     self.execute_button.setText('Right query executed. Profiling results...')
+    #     self.profile_right = self.profile_results(df2,'right')
+    #     sself.execute_button.setText('Writing results to display...')
+    #     self.display_results(self.result_table1, df1)
+    #     self.display_results(self.result_table2, df2)
+    #     self.qry_stats_label_left.setText(f'Rows:{len(df1)} in {exec_time_left:.2f} ms')
+    #     self.qry_stats_label_right.setText(f'Rows:{len(df2)} in {exec_time_right:.2f} ms')
+    #     self.execute_button.setText('validating results...')
+    #     # Perform comparison if both results are available
+    #     if not df1.empty and not df2.empty:
+    #         self.execute_button.setText('Starting comparison...')
+    #         comp_pass, message = self.compare_dataframes(df1, df2)
+    #         if not comp_pass:
+    #             message_type = 'error'
+    #             self.write_to_analysis_display(message, message_type)
+    #             self.enable_ui_elements(True)
+    #             return
+    #         else:
+    #             message = 'Results are similar in shape, column names, data types, and index.'
+    #             message_type = 'info'
+    #             self.write_to_analysis_display(message, message_type)
+    #     else:
+    #         self.write_to_analysis_display('No results to compare.', 'warning')
+    #         self.enable_ui_elements(True)
+            
+    #     self.enable_ui_elements(True)
+    #     # except Exception as e:
+    #     #     QMessageBox.critical(self, 'Error', f'An error occurred: {e}', QMessageBox.Ok)
+    # def update_button_text(self, message):
+    #     self.execute_button.setText(message)
+    #     self.execute_button.repaint() # Force repaint to update the text immediately
+    
     def enable_ui_elements(self,enable=True):
         self.execute_button.setEnabled(enable)
         self.query_input1.setEnabled(enable)
         self.query_input2.setEnabled(enable)
         if(enable):
             # self.progress_dialog.close()
-            self.execute_button.text = 'Analyze'
+            self.execute_button.setText('Analyze')
             
     def reset_ui(self):
         self.result_table1.clear()
@@ -257,12 +357,16 @@ class MainApp(QMainWindow):
             # self.profile_results(differences,'Differences')
             self.profile_diff = self.profile_left.compare(self.profile_right)
             self.profile_diff.to_file('reports/differences_profile.html')
-            return False, "Differences found. See profile reports for details."
+            diff = df1.ne(df2) 
+            differing_cells = diff.stack()[diff.stack()]
+            Message = f"Differences found in {len(differing_cells)} cells. /n/nSee profile reports for details."
+            return False, Message
         else:
             return True, "Results are similar in shape, column names, data types, and index."    
         
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon('analysis.png'))
     ex = MainApp()
     ex.show()
     sys.exit(app.exec_())
