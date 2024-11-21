@@ -1,6 +1,6 @@
 # Ignore the venv folder
 venv/
-
+repots/
 # Ignore Python cache files
 __pycache__/
 *.pyc

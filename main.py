@@ -1,19 +1,20 @@
 import sys
 import time
 import re
-from pandas_profiling import ProfileReport
+import os
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QTextEdit, QLabel, QMessageBox, QTableWidget, QTableWidgetItem, QProgressDialog
+    QPushButton, QTextEdit, QLabel, QMessageBox, QTableWidget, QTableWidgetItem, QDialog
 )
-from PyQt5.QtCore import Qt
+from ydata_profiling import ProfileReport
+from PyQt5.QtCore import Qt,QThread, pyqtSignal
 from PyQt5.QtGui import QColor
 from sqlalchemy import create_engine, event
 import pandas as pd
 from menu import MenuComponent
 
-class SqlApp(QMainWindow):
+class MainApp(QMainWindow):
     # Initial connection strings
     sql_connection_string = "mssql+pyodbc://dmatchadmin:IntDon786#@dmdb-srv.database.windows.net,1433/DonMatchDB?driver=ODBC+Driver+18+for+SQL+Server"
     def __init__(self):
@@ -106,58 +107,48 @@ class SqlApp(QMainWindow):
             color = "black"
         self.analysis_display.setTextColor(QColor(color)) 
         self.analysis_display.append(message)
-
+    
+        
+        
     def execute_queries(self):
         #clear previous results
         self.reset_ui()
+        self.clean_reports_folder()
         # Disable UI elements 
         self.enable_ui_elements(False)
         
         # Show progress dialog 
-        self.progress_dialog = QProgressDialog("Executing queries...", "Cancel", 0, 100, self) 
-        self.progress_dialog.setWindowModality(Qt.WindowModal)
-        self.progress_dialog.setWindowTitle("Please wait")
-        self.progress_dialog.setRange(0, 0)
-        self.progress_dialog.setMinimumWidth(400)
-        self.progress_dialog.show()
-        QApplication.processEvents()
-        
-        self.progress_dialog.setValue(10)
-        
+        # self.progress_dialog = QDialog('Executing queries...', self)
+        self.execute_button.text
+        self.execute_button.text= ('Executing queries...')
         query1 = self.query_input1.toPlainText()
         query2 = self.query_input2.toPlainText()
         
         df1,exec_time_left = self.execute_query(query1)
-        self.progress_dialog.setValue(30)
-        QApplication.processEvents()
-        self.profile_query(df1,'left')
+        self.execute_button.text= 'Left query executed. Profiling results...'
+        self.profile_left = self.profile_results(df1,'left')
         df2,exec_time_right = self.execute_query(query2)
-        self.progress_dialog.setValue(50)
-        self.profile_query(df2,'right')
+        self.status_label='Right query executed. Profiling results...'
+        self.profile_right = self.profile_results(df2,'right')
+        self.status_label='Writing results to display...'
         self.display_results(self.result_table1, df1)
-        self.progress_dialog.setValue(60)
-        QApplication.processEvents()
         self.display_results(self.result_table2, df2)
-        self.progress_dialog.setValue(70)
         self.qry_stats_label_left.setText(f'Rows:{len(df1)} in {exec_time_left:.2f} ms')
-        self.progress_dialog.setValue(80)
-        QApplication.processEvents()
         self.qry_stats_label_right.setText(f'Rows:{len(df2)} in {exec_time_right:.2f} ms')
-
+        self.execute_button.text= 'validating results...'
         # Perform comparison if both results are available
         if not df1.empty and not df2.empty:
-            comp_pass, message = compare_dataframes(df1, df2)
+            self.execute_button.text='Starting comparison...'
+            comp_pass, message = self.compare_dataframes(df1, df2)
             if not comp_pass:
                 message_type = 'error'
                 self.write_to_analysis_display(message, message_type)
                 self.enable_ui_elements(True)
                 return
             else:
+                message = 'Results are similar in shape, column names, data types, and index.'
                 message_type = 'info'
                 self.write_to_analysis_display(message, message_type)
-            self.progress_dialog.setValue(90)
-            analysis = self.summarize_differences(df1, df2)
-            self.analysis_display.setText(analysis)
         else:
             self.write_to_analysis_display('No results to compare.', 'warning')
             self.enable_ui_elements(True)
@@ -170,8 +161,8 @@ class SqlApp(QMainWindow):
         self.query_input1.setEnabled(enable)
         self.query_input2.setEnabled(enable)
         if(enable):
-            self.progress_dialog.setValue(100)
-            self.progress_dialog.close()
+            # self.progress_dialog.close()
+            self.execute_button.text = 'Analyze'
             
     def reset_ui(self):
         self.result_table1.clear()
@@ -179,6 +170,7 @@ class SqlApp(QMainWindow):
         self.analysis_display.clear()
         self.qry_stats_label_left.setText('Rows: N/A in N/A ms')
         self.qry_stats_label_right.setText('Rows: N/A in N/A ms')
+        self.execute_button.text = 'Analyze'
 
     def execute_query(self, qry):
         try:
@@ -211,116 +203,66 @@ class SqlApp(QMainWindow):
             for j in range(df.shape[1]):
                 table_widget.setItem(i, j, QTableWidgetItem(str(df.iloc[i, j])))
 
-    def profile_query(self, df,type):
-        profile = df.profile_report(title='Query Profile')
-        profile.to_file(f'{type}_profile.html')
+    def profile_results(self, df,type):
+        root_dir = os.path.dirname(os.path.abspath(__file__)) 
+        reports_folder = os.path.join(root_dir, 'reports')
+        
+        if not os.path.exists(reports_folder): 
+            os.makedirs(reports_folder)
+        
+        report_path = os.path.join(reports_folder, f'{type}_profile.html')
+        profile = ProfileReport(df,title=f'{type}_Results Profile')
+        profile.to_file(report_path)
         return profile
-        
-    def summarize_differences(self, df1, df2):
-        differences = []
     
-        # Numeric differences
-        numeric_diff = self.calculate_numeric_differences(df1, df2)
-        if numeric_diff:
-            differences.append(numeric_diff)
-
-        # Boolean differences
-        bool_diff = self.calculate_bool_differences(df1, df2)
-        if bool_diff:
-            differences.append(bool_diff)
-
-        # String differences
-        string_diff = self.calculate_string_differences(df1, df2)
-        if string_diff:
-            differences.append(string_diff)
-
-        # Datetime differences
-        datetime_diff = self.calculate_datetime_differences(df1, df2)
-        if datetime_diff:
-            differences.append(datetime_diff)
-    # High-level summary
-        high_level_summary = self.generate_high_level_summary(differences)
-        differences.insert(0, high_level_summary)
+    def clean_reports_folder(self):
+        root_dir = os.path.dirname(os.path.abspath(__file__)) 
+        reports_folder = os.path.join(root_dir, 'reports')
         
-        return '\n\n'.join(differences) if differences else 'No differences found.'
-    def calculate_numeric_differences(self, df1, df2):
-        numeric_cols = df1.select_dtypes(include='number').columns
-        if numeric_cols.empty:
-            return ''
-
-        var1 = df1[numeric_cols].var()
-        var2 = df2[numeric_cols].var()
-        var_diff = var1 - var2
-
-        return f'Numeric Differences:\n{var_diff.to_string()}'
-    
-    
-    def calculate_bool_differences(self, df1, df2):
-        bool_cols = df1.select_dtypes(include='bool').columns
-        if bool_cols.empty:
-            return ''
-
-        bool_diff = df1[bool_cols].astype(int).sum() - df2[bool_cols].astype(int).sum()
-        return f'Boolean Differences:\n{bool_diff.to_string()}'
-
-    def calculate_string_differences(self, df1, df2):
-        string_cols = df1.select_dtypes(include='object').columns
-        if string_cols.empty:
-            return ''
-
-        string_diff = (df1[string_cols] != df2[string_cols]).sum()
-        if(string_diff.any()):
-            return f'String Differences (number of differing rows):\n{string_diff.to_string()}'
-        else:
-            return ''
-
-    def calculate_datetime_differences(self, df1, df2):
-        datetime_cols = df1.select_dtypes(include='datetime').columns
-        if datetime_cols.empty:
-            return ''
-
-        datetime_diff = (df1[datetime_cols] != df2[datetime_cols]).sum()
-        return f'Datetime Differences (number of differing rows):\n{datetime_diff.to_string()}'
-
-    def generate_high_level_summary(self, differences):
-        numeric_count = sum(1 for diff in differences if 'Numeric Differences' in diff)-1
-        bool_count = sum(1 for diff in differences if 'Boolean Differences' in diff)-1
-        string_count = sum(1 for diff in differences if 'String Differences' in diff)
-        datetime_count = sum(1 for diff in differences if 'Datetime Differences' in diff)-1
-
-        return (
-            f'High-Level Summary:\n'
-            f'- Numeric Differences: {numeric_count}\n'
-            f'- Boolean Differences: {bool_count}\n'
-            f'- String Differences: {string_count}\n'
-            f'- Datetime Differences: {datetime_count}'
-        )
-        
+        if os.path.exists(reports_folder):
+            for filename in os.listdir(reports_folder):
+                file_path = os.path.join(reports_folder, filename) 
+                try:
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.remove(file_path) 
+                    # elif os.path.isdir(file_path):
+                        # shutil.rmtree(file_path) 
+                except Exception as e: print(f'Failed to delete {file_path}. Reason: {e}')
     # Function to compare DataFrames and return a boolean and message if there are discrepancies
-def compare_dataframes(df1, df2):
-    # Check shapes
-    if df1.shape != df2.shape:
-        if df1.shape[0] != df2.shape[0]:
-            return False, f"Row count mismatch: Left query has {df1.shape[0]} rows, Right has {df2.shape[0]} rows. Queries return differing number of rows."
-        if df1.shape[1] != df2.shape[1]:
-            return False, f"Column count mismatch: Left query has {df1.shape[1]} columns, Right has {df2.shape[1]} columns. Queries return differing number of columns."
+    def compare_dataframes(self,df1, df2):
+        # Sort DataFrames 
+        df1 = df1.sort_values(by=df1.columns.tolist()).reset_index(drop=True) 
+        df2 = df2.sort_values(by=df2.columns.tolist()).reset_index(drop=True)
+        # Check shapes
+        if df1.shape != df2.shape:
+            if df1.shape[0] != df2.shape[0]:
+                return False, f"Row count mismatch: Left query has {df1.shape[0]} rows, Right has {df2.shape[0]} rows. Queries return differing number of rows."
+            if df1.shape[1] != df2.shape[1]:
+                return False, f"Column count mismatch: Left query has {df1.shape[1]} columns, Right has {df2.shape[1]} columns. Queries return differing number of columns."
 
-    # Check column names
-    if list(df1.columns) != list(df2.columns):
-        return False, f"Column names mismatch: Left query columns are {list(df1.columns)}, Right query columns are {list(df2.columns)}"
-    
-    # Check data types
-    if list(df1.dtypes) != list(df2.dtypes):
-        return False, f"Data types mismatch: Left query types are {list(df1.dtypes)}, Right query types are {list(df2.dtypes)}"
-    
-    # Check indexes
-    if not df1.index.equals(df2.index):
-        return False, f"Index mismatch: Left query index is {df1.index}, Right query index is {df2.index}"
+        # Check column names
+        if list(df1.columns) != list(df2.columns):
+            return False, f"Column names mismatch: Left query columns are {list(df1.columns)}, Right query columns are {list(df2.columns)}"
+        
+        # Check data types
+        if list(df1.dtypes) != list(df2.dtypes):
+            return False, f"Data types mismatch: Left query types are {list(df1.dtypes)}, Right query types are {list(df2.dtypes)}"
+        
+        # Check indexes
+        if not df1.index.equals(df2.index):
+            return False, f"Index mismatch: Left query index is {df1.index}, Right query index is {df2.index}"
 
-    return True, "Results are similar in shape, column names, data types, and index."    
+        differences = df1.compare(df2,result_names=('Left','Right'))
+        if not differences.empty:
+            # self.profile_results(differences,'Differences')
+            self.profile_diff = self.profile_left.compare(self.profile_right)
+            self.profile_diff.to_file('reports/differences_profile.html')
+            return False, "Differences found. See profile reports for details."
+        else:
+            return True, "Results are similar in shape, column names, data types, and index."    
         
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    ex = SqlApp()
+    ex = MainApp()
     ex.show()
     sys.exit(app.exec_())
