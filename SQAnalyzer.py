@@ -8,8 +8,8 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QLabel, QMessageBox, QTableWidget, QTableWidgetItem, QDialog
 )
-from ydata_profiling import ProfileReport
-from PyQt5.QtCore import Qt,QThread, pyqtSignal
+# from ydata_profiling import ProfileReport
+from PyQt5.QtCore import Qt#,QThread, pyqtSignal
 from PyQt5.QtGui import QColor,QIcon
 from sqlalchemy import create_engine, event
 import pandas as pd
@@ -26,36 +26,8 @@ def log_unhandled_exceptions(exc_type, exc_value, exc_traceback):
     logging.error("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
 # Set the global exception handler 
 sys.excepthook = log_unhandled_exceptions    
-class QueryWorker(QThread):
-    update_status = pyqtSignal(str)
-    finished = pyqtSignal(object, object, object, object)  # Dataframes and execution times
-
-    def __init__(self, query1, query2, execute_query_func, profile_results_func):
-        super().__init__()
-        self.query1 = query1
-        self.query2 = query2
-        self.execute_query = execute_query_func
-        self.profile_results = profile_results_func
-
-    def run(self):
-        try:
-            self.update_status.emit('Executing left query...')
-            df1, exec_time_left = self.execute_query(self.query1)
-            self.update_status.emit('Left query executed. Profiling results...')
-            profile_left = self.profile_results(df1, 'left')
-
-            self.update_status.emit('Executing right query...')
-            df2, exec_time_right = self.execute_query(self.query2)
-            self.update_status.emit('Right query executed. Profiling results...')
-            profile_right = self.profile_results(df2, 'right')
-
-            self.finished.emit(df1, exec_time_left, df2, exec_time_right)
-        except Exception as e:
-            self.update_status.emit(f'Error: {e}')
-            self.finished.emit(None, None, None, None)
-  
-
 class MainApp(QMainWindow):
+    
     # Initial connection strings
     sql_connection_string = "mssql+pyodbc://dmatchadmin:IntDon786#@dmdb-srv.database.windows.net,1433/DonMatchDB?driver=ODBC+Driver+18+for+SQL+Server"
     def __init__(self):
@@ -63,6 +35,7 @@ class MainApp(QMainWindow):
         self.initUI()
 
     def initUI(self):
+        self.initialStats = 'Rows: N/A in N/A ms'
         self.setWindowTitle('SQL Query Analyzer')
         self.setGeometry(100, 100, 1000, 600)
         # Set the window icon 
@@ -119,10 +92,10 @@ class MainApp(QMainWindow):
 
         # Statistics display
         stats_layout = QHBoxLayout()
-        self.qry_stats_label_left = QLabel('Rows: N/A in N/A ms', self)
+        self.qry_stats_label_left = QLabel(self.initialStats, self)
         self.qry_stats_label_left.setAutoFillBackground(True)
         self.qry_stats_label_left.setStyleSheet("background-color: lightgrey;color: Blue;font-weight: bold;")
-        self.qry_stats_label_right = QLabel('Rows: N/A in N/A ms', self)
+        self.qry_stats_label_right = QLabel(self.initialStats, self)
         self.qry_stats_label_right.setAutoFillBackground(True)
         self.qry_stats_label_right.setStyleSheet("background-color: lightgrey;color: Blue;font-weight: bold;")
         self.qry_stats_label_left.setAlignment(Qt.AlignRight)
@@ -154,7 +127,6 @@ class MainApp(QMainWindow):
     def execute_queries(self):
         # Clear previous results
         self.reset_ui()
-        self.clean_reports_folder()
         
         # Disable UI elements
         self.enable_ui_elements(False)
@@ -166,11 +138,10 @@ class MainApp(QMainWindow):
         query1 = self.query_input1.toPlainText()
         query2 = self.query_input2.toPlainText()
         
-        # Create and start the worker thread
-        self.worker = QueryWorker(query1, query2, self.execute_query, self.profile_results)
-        self.worker.update_status.connect(self.update_button_text)
-        self.worker.finished.connect(self.handle_query_results)
-        self.worker.start()
+        df1,exec_time_1 = self.execute_query(query1)
+        df2,exec_time_2 = self.execute_query(query2)
+        self.update_button_text('Displaying results...')
+        self.handle_query_results(df1, exec_time_1, df2, exec_time_2)
 
     def update_button_text(self, message):
         self.execute_button.setText(message)
@@ -254,32 +225,6 @@ class MainApp(QMainWindow):
             for j in range(df.shape[1]):
                 table_widget.setItem(i, j, QTableWidgetItem(str(df.iloc[i, j])))
 
-    def profile_results(self, df,type):
-        root_dir = os.path.dirname(os.path.abspath(__file__)) 
-        reports_folder = os.path.join(root_dir, 'reports')
-        
-        if not os.path.exists(reports_folder): 
-            os.makedirs(reports_folder)
-        
-        report_path = os.path.join(reports_folder, f'{type}_profile.html')
-        profile = ProfileReport(df,title=f'{type}_Results Profile')
-        profile.to_file(report_path)
-        return profile
-    
-    def clean_reports_folder(self):
-        root_dir = os.path.dirname(os.path.abspath(__file__)) 
-        reports_folder = os.path.join(root_dir, 'reports')
-        
-        if os.path.exists(reports_folder):
-            for filename in os.listdir(reports_folder):
-                file_path = os.path.join(reports_folder, filename) 
-                try:
-                    if os.path.isfile(file_path) or os.path.islink(file_path):
-                        os.remove(file_path) 
-                    # elif os.path.isdir(file_path):
-                        # shutil.rmtree(file_path) 
-                except Exception as e: print(f'Failed to delete {file_path}. Reason: {e}')
-    # Function to compare DataFrames and return a boolean and message if there are discrepancies
     def compare_dataframes(self,df1, df2):
         # Sort DataFrames 
         df1 = df1.sort_values(by=df1.columns.tolist()).reset_index(drop=True) 
@@ -306,11 +251,24 @@ class MainApp(QMainWindow):
         differences = df1.compare(df2,result_names=('Left','Right'))
         if not differences.empty:
             # self.profile_results(differences,'Differences')
-            self.profile_diff = self.profile_left.compare(self.profile_right)
-            self.profile_diff.to_file('reports/differences_profile.html')
+            # self.profile_diff = self.profile_left.compare(self.profile_right)
+            # self.profile_diff.to_file('reports/differences_profile.html')
             diff = df1.ne(df2) 
             differing_cells = diff.stack()[diff.stack()]
-            Message = f"Differences found in {len(differing_cells)} cells. /n/nSee profile reports for details."
+            
+            # Create a DataFrame to show the differing values side by side 
+            difference_details = pd.DataFrame({
+                'Left Results': df1.stack()[differing_cells.index], 
+                'Right Results': df2.stack()[differing_cells.index] 
+                })
+            
+            Message = (
+                f"Data is different in {len(differing_cells)} cells.\n" 
+                f"The top 10 differences are as below:\n" 
+                f"{difference_details.head(10)}"
+            )
+            
+            # Message = f"Data is different in {len(differing_cells)} cells.\n The top 10 differences are as below:\n{differing_cells.head(10)}"
             return False, Message
         else:
             return True, "Results are similar in shape, column names, data types, and index."    
