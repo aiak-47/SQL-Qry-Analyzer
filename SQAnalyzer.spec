@@ -5,7 +5,7 @@ a = Analysis(
     ['SQAnalyzer.py'],
     pathex=[],
     binaries=[],
-    datas=['analysis.png'],
+    datas=[],
     hiddenimports=['pyodbc'],
     hookspath=[],
     hooksconfig={},
@@ -25,8 +25,8 @@ exe = EXE(
     name='SQAnalyzer',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
-    upx=False,
+    strip=False,
+    upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -34,5 +34,6 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
-    entitlements_file=None
+    entitlements_file=None,
+    icon=['analysis.png'],
 )
