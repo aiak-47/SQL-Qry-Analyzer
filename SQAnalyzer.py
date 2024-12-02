@@ -29,7 +29,8 @@ sys.excepthook = log_unhandled_exceptions
 class MainApp(QMainWindow):
     
     # Initial connection strings
-    sql_connection_string = "mssql+pyodbc://dmatchadmin:IntDon786#@dmdb-srv.database.windows.net,1433/DonMatchDB?driver=ODBC+Driver+18+for+SQL+Server"
+    # sql_connection_string = "mssql+pyodbc://dmatchadmin:IntDon786#@dmdb-srv.database.windows.net,1433/DonMatchDB?driver=ODBC+Driver+18+for+SQL+Server"
+    sql_connection_string = ""
     def __init__(self):
         super().__init__()
         self.initUI()
@@ -39,7 +40,7 @@ class MainApp(QMainWindow):
         self.setWindowTitle('SQL Query Analyzer')
         self.setGeometry(100, 100, 1000, 600)
         # Set the window icon 
-        self.setWindowIcon(QIcon('analysis.png'))
+        self.setWindowIcon(QIcon(icon_path))
 
         # Maximize the window
         self.showMaximized()
@@ -114,7 +115,7 @@ class MainApp(QMainWindow):
         central_widget.setLayout(layout)
     def write_to_analysis_display(self, message, message_type): 
         if message_type == 'info': 
-            color = "black" 
+            color = "green" 
         elif message_type == 'warning':
             color = "orange"
         elif message_type == 'error':
@@ -250,9 +251,6 @@ class MainApp(QMainWindow):
 
         differences = df1.compare(df2,result_names=('Left','Right'))
         if not differences.empty:
-            # self.profile_results(differences,'Differences')
-            # self.profile_diff = self.profile_left.compare(self.profile_right)
-            # self.profile_diff.to_file('reports/differences_profile.html')
             diff = df1.ne(df2) 
             differing_cells = diff.stack()[diff.stack()]
             
@@ -268,14 +266,18 @@ class MainApp(QMainWindow):
                 f"{difference_details.head(10)}"
             )
             
-            # Message = f"Data is different in {len(differing_cells)} cells.\n The top 10 differences are as below:\n{differing_cells.head(10)}"
             return False, Message
         else:
             return True, "Results are similar in shape, column names, data types, and index."    
         
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon('analysis.png'))
+    # Set the path to the icon file 
+    if hasattr(sys, '_MEIPASS'):
+        icon_path = os.path.join(sys._MEIPASS, 'analysis.png') 
+    else: 
+        icon_path = 'analysis.png'
+    app.setWindowIcon(QIcon(icon_path))
     ex = MainApp()
     ex.show()
     sys.exit(app.exec_())
