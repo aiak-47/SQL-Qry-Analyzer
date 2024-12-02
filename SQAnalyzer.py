@@ -8,7 +8,6 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QLabel, QMessageBox, QTableWidget, QTableWidgetItem, QDialog
 )
-# from ydata_profiling import ProfileReport
 from PyQt5.QtCore import Qt#,QThread, pyqtSignal
 from PyQt5.QtGui import QColor,QIcon
 from sqlalchemy import create_engine, event
@@ -29,7 +28,6 @@ sys.excepthook = log_unhandled_exceptions
 class MainApp(QMainWindow):
     
     # Initial connection strings
-    # sql_connection_string = "mssql+pyodbc://dmatchadmin:IntDon786#@dmdb-srv.database.windows.net,1433/DonMatchDB?driver=ODBC+Driver+18+for+SQL+Server"
     sql_connection_string = ""
     def __init__(self):
         super().__init__()
